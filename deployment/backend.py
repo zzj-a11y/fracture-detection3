@@ -41,10 +41,23 @@ import time
 try:
     import torch.serialization
     import torch.nn.modules.container
+    import torch.nn
 
     # 添加必要的 PyTorch 类到安全全局列表
     torch.serialization.add_safe_globals([
         torch.nn.modules.container.Sequential,
+        torch.nn.Sequential,
+        torch.nn.Conv2d,
+        torch.nn.ReLU,
+        torch.nn.MaxPool2d,
+        torch.nn.Linear,
+        torch.nn.BatchNorm2d,
+        torch.nn.Dropout,
+        torch.nn.AdaptiveAvgPool2d,
+        torch.nn.AdaptiveMaxPool2d,
+        torch.nn.Sigmoid,
+        torch.nn.Module,
+        torch.nn.Parameter,
         object  # 基础对象
     ])
 
@@ -55,18 +68,13 @@ try:
     except ImportError:
         pass  # ultralytics 未安装，跳过
 
-    # 添加其他可能需要的常见类
     try:
-        torch.serialization.add_safe_globals([
-            torch.nn.modules.conv.Conv2d,
-            torch.nn.modules.activation.ReLU,
-            torch.nn.modules.pooling.MaxPool2d,
-            torch.nn.modules.linear.Linear,
-            torch.nn.modules.batchnorm.BatchNorm2d,
-            torch.nn.modules.dropout.Dropout
-        ])
-    except Exception:
-        pass  # 如果某些类不存在，跳过
+        from ultralytics.nn.modules import Conv, Bottleneck, C2f, SPPF, Detect
+        torch.serialization.add_safe_globals([Conv, Bottleneck, C2f, SPPF, Detect])
+    except ImportError:
+        pass  # ultralytics 模块未安装，跳过
+
+    print("✅ PyTorch 安全全局变量配置完成")
 except Exception as e:
     print(f"配置安全全局变量失败: {e}")
 
@@ -253,6 +261,40 @@ class FractureDetectionSystem:
         if YOLO is not None:
             try:
                 logger.info("加载 YOLO 模型...")
+                # 在加载YOLO模型前添加必要的安全全局变量
+                import torch.serialization
+                import torch.nn.modules.container
+                import torch.nn
+
+                # 添加PyTorch常见类到安全全局列表
+                torch.serialization.add_safe_globals([
+                    torch.nn.modules.container.Sequential,
+                    torch.nn.Sequential,
+                    torch.nn.Conv2d,
+                    torch.nn.ReLU,
+                    torch.nn.MaxPool2d,
+                    torch.nn.Linear,
+                    torch.nn.BatchNorm2d,
+                    torch.nn.Dropout,
+                    torch.nn.AdaptiveAvgPool2d,
+                    torch.nn.AdaptiveMaxPool2d,
+                    torch.nn.Sigmoid,
+                    object
+                ])
+
+                # 尝试导入ultralytics特定类
+                try:
+                    from ultralytics.nn.modules import Conv, Bottleneck, C2f, SPPF, Detect
+                    torch.serialization.add_safe_globals([Conv, Bottleneck, C2f, SPPF, Detect])
+                except ImportError:
+                    pass
+
+                try:
+                    from ultralytics.nn.tasks import DetectionModel
+                    torch.serialization.add_safe_globals([DetectionModel])
+                except ImportError:
+                    pass
+
                 self.yolo_model = YOLO(YOLO_MODEL_PATH)
                 logger.info(f"YOLO 模型加载成功: {YOLO_MODEL_PATH}")
             except Exception as e:
