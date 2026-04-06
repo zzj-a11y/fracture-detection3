@@ -40,8 +40,13 @@ import time
 # 配置 PyTorch 安全全局变量（用于 PyTorch 2.6+）
 try:
     import torch.serialization
-    # 添加 ultralytics 相关类到安全全局列表
-    torch.serialization.add_safe_globals([object])  # 先添加一个空对象占位
+    import torch.nn.modules.container
+
+    # 添加必要的 PyTorch 类到安全全局列表
+    torch.serialization.add_safe_globals([
+        torch.nn.modules.container.Sequential,
+        object  # 基础对象
+    ])
 
     # 尝试导入 ultralytics 并添加具体类
     try:
@@ -49,6 +54,19 @@ try:
         torch.serialization.add_safe_globals([DetectionModel])
     except ImportError:
         pass  # ultralytics 未安装，跳过
+
+    # 添加其他可能需要的常见类
+    try:
+        torch.serialization.add_safe_globals([
+            torch.nn.modules.conv.Conv2d,
+            torch.nn.modules.activation.ReLU,
+            torch.nn.modules.pooling.MaxPool2d,
+            torch.nn.modules.linear.Linear,
+            torch.nn.modules.batchnorm.BatchNorm2d,
+            torch.nn.modules.dropout.Dropout
+        ])
+    except Exception:
+        pass  # 如果某些类不存在，跳过
 except Exception as e:
     print(f"配置安全全局变量失败: {e}")
 
@@ -430,6 +448,20 @@ async def serve_frontend():
             },
             "error": "前端页面加载失败"
         }
+
+# 健康检查端点
+@app.get("/health")
+async def health_check():
+    """健康检查端点，用于云平台监控"""
+    return {
+        "status": "healthy",
+        "service": "儿童手腕隐匿性骨折检测系统",
+        "timestamp": datetime.now().isoformat(),
+        "models": {
+            "classification": detection_system.classification_model is not None,
+            "yolo": detection_system.yolo_model is not None
+        }
+    }
 
 # 模拟数据存储（生产环境应使用数据库）
 mock_patients = [
