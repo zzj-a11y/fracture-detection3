@@ -37,6 +37,21 @@ import shutil
 from datetime import datetime
 import time
 
+# 配置 PyTorch 安全全局变量（用于 PyTorch 2.6+）
+try:
+    import torch.serialization
+    # 添加 ultralytics 相关类到安全全局列表
+    torch.serialization.add_safe_globals([object])  # 先添加一个空对象占位
+
+    # 尝试导入 ultralytics 并添加具体类
+    try:
+        from ultralytics.nn.tasks import DetectionModel
+        torch.serialization.add_safe_globals([DetectionModel])
+    except ImportError:
+        pass  # ultralytics 未安装，跳过
+except Exception as e:
+    print(f"配置安全全局变量失败: {e}")
+
 # YOLO 检测
 try:
     from ultralytics import YOLO
@@ -209,7 +224,7 @@ class FractureDetectionSystem:
             logger.info("加载分类模型...")
             self.classification_model = build_model()
             self.classification_model.load_state_dict(
-                torch.load(CLASSIFICATION_MODEL_PATH, map_location=self.device)
+                torch.load(CLASSIFICATION_MODEL_PATH, map_location=self.device, weights_only=False)
             )
             self.classification_model.eval()
             logger.info(f"分类模型加载成功: {CLASSIFICATION_MODEL_PATH}")
@@ -404,7 +419,17 @@ async def serve_frontend():
         return HTMLResponse(content=html_content, status_code=200)
     except Exception as e:
         logger.error(f"加载前端页面失败: {e}")
-        return HTMLResponse(content="<h1>前端页面加载失败</h1>", status_code=500)
+        # 如果前端加载失败，返回API信息
+        return {
+            "service": "儿童手腕隐匿性骨折检测系统",
+            "version": "1.0.0",
+            "status": "running",
+            "models_loaded": {
+                "classification": detection_system.classification_model is not None,
+                "yolo": detection_system.yolo_model is not None
+            },
+            "error": "前端页面加载失败"
+        }
 
 # 模拟数据存储（生产环境应使用数据库）
 mock_patients = [
@@ -478,18 +503,6 @@ mock_analysis_history = [
 
 chat_messages = []
 
-@app.get("/")
-async def root():
-    """根端点，返回 API 信息"""
-    return {
-        "service": "儿童手腕隐匿性骨折检测系统",
-        "version": "1.0.0",
-        "status": "running",
-        "models_loaded": {
-            "classification": detection_system.classification_model is not None,
-            "yolo": detection_system.yolo_model is not None
-        }
-    }
 
 @app.post("/api/analyze")
 async def analyze_image(
