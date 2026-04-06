@@ -1,0 +1,127 @@
+儿童手腕隐匿性骨折检测系统 - 部署包文件清单
+=====================================================
+
+打包日期：2026年4月6日
+版本：1.0
+
+【重要提示】请压缩整个文件夹，不要单独压缩文件。
+
+## 必需包含的核心文件
+
+### 1. 后端运行文件
+- backend.py                    # FastAPI后端主程序
+- requirements.txt              # Python依赖包列表
+
+### 2. 前端界面文件
+- fracture_frontend.html        # 前端用户界面（英文文件名）
+- 完整功能版_6_backup.html     # 原始前端文件备份
+
+### 3. 启动脚本（按推荐顺序）
+- launch_system.bat             # 主启动脚本（推荐，英文，自动打开前端）
+- run_system_ansi.bat           # 手动打开前端版本（英文）
+- final_launch_ansi.bat         # 全自动启动脚本（备用，英文）
+- start.bat                     # 中文启动脚本（可能显示乱码）
+- start_simple.bat              # 简单中文版本
+- run.bat                       # 原始启动脚本
+
+### 4. 模型文件
+- model/model_3.pth             # 分类模型（19MB）
+- runs/yolov8_fracture_best.pt  # YOLO检测模型（6MB，在runs目录）
+
+### 5. 说明文档
+- README_一键运行.txt           # 用户使用说明（已更新）
+- DEPLOYMENT_GUIDE.md           # 部署指南
+- 部署说明.txt                  # 详细打包指南
+
+### 6. 自动创建目录（空目录）
+- exit/uploads/                 # 上传图片保存目录
+- runs/                         # YOLO模型目录（已包含模型）
+- model/                        # 分类模型目录（已包含模型）
+
+### 7. 可选保留文件
+- CNN_隐匿性骨折案例（优化版）.py  # 训练脚本（部署时可删除）
+- README.md                     # 项目说明
+- 前端对接示例.js               # API对接示例
+- 说明/                         # 说明文档目录
+- 部署包文件清单.txt           # 本文件
+
+## 目录结构
+```
+儿童手腕隐匿性骨折检测系统_部署包.zip/
+├── backend.py
+├── fracture_frontend.html
+├── 完整功能版_6_backup.html
+├── requirements.txt
+├── launch_system.bat
+├── run_system_ansi.bat
+├── final_launch_ansi.bat
+├── start.bat
+├── start_simple.bat
+├── run.bat
+├── README_一键运行.txt
+├── DEPLOYMENT_GUIDE.md
+├── 部署说明.txt
+├── 部署包文件清单.txt
+├── model/
+│   └── model_3.pth
+├── runs/
+│   └── yolov8_fracture_best.pt
+├── exit/
+│   └── uploads/           # 自动创建（空）
+├── 说明/                  # 可选
+└── __pycache__/           # 应删除（Python缓存）
+```
+
+## 打包步骤
+
+1. 【清理】删除临时文件：
+   - 删除 `__pycache__/` 目录（如果存在）
+   - 清空 `exit/uploads/` 目录中的测试图片
+   - 删除 `output.txt` 等测试文件
+
+2. 【验证】测试启动脚本：
+   - 双击 `launch_system.bat` 测试能否正常启动
+   - 确认前端自动打开（fracture_frontend.html）
+   - 测试上传图片和分析功能
+
+3. 【压缩】创建ZIP文件：
+   - 选中整个项目文件夹（zzj）
+   - 右键 → 发送到 → 压缩(zipped)文件夹
+   - 重命名为：`儿童手腕隐匿性骨折检测系统_部署包.zip`
+
+4. 【验证】测试部署包：
+   - 将ZIP文件复制到其他目录解压
+   - 双击 `launch_system.bat` 测试能否正常运行
+   - 确认首次运行能自动安装依赖
+
+## 最终用户使用流程
+
+1. 解压ZIP文件到任意目录
+2. 双击 `launch_system.bat`
+3. 首次运行：
+   - 自动检查Python（如未安装则提示）
+   - 自动安装依赖包（需要网络）
+   - 自动检测并准备模型文件
+   - 检查端口8000占用情况
+4. 系统启动：
+   - 启动后端服务（新窗口）
+   - 自动打开前端界面
+5. 使用系统：
+   - 在前端上传X光图片
+   - 查看分析结果和医疗建议
+   - 关闭所有窗口结束使用
+
+## 故障排除
+
+1. **Python未安装**：按照提示安装Python 3.8+并添加PATH
+2. **依赖安装失败**：手动运行 `pip install -r requirements.txt`
+3. **端口8000被占用**：关闭占用程序或等待10秒
+4. **前端无法打开**：手动双击 `fracture_frontend.html`
+5. **模型文件缺失**：确保 model/ 和 runs/ 目录存在且包含模型文件
+
+## 联系方式
+如有问题，请联系项目开发者。
+
+---
+注意：本系统为医疗辅助诊断工具，不能替代专业医生的临床诊断。
+=====================================================

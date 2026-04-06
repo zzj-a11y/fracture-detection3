@@ -1,0 +1,26 @@
+# Pediatric Occult Fracture Detection System - Deployment Dependencies
+
+# Core Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+gunicorn==21.2.0
+
+# Deep Learning
+torch==2.1.0
+torchvision==0.16.0
+ultralytics==8.0.196
+
+# Image Processing
+opencv-python-headless==4.8.1.78  # Headless version, no GUI dependencies
+Pillow==10.1.0
+numpy==1.24.4
+
+# Data Processing and Tools
+tqdm==4.66.1
+imbalanced-learn==0.10.1
+pyyaml==6.0.1
+
+# Optional: For debugging
+# matplotlib==3.8.0
+# pandas==2.1.4

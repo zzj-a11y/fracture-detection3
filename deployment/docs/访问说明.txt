@@ -1,0 +1,56 @@
+儿童手腕隐匿性骨折检测系统访问说明
+======================================
+
+问题：为什么 http://0.0.0.0:8000 无法访问？
+
+原因：0.0.0.0 是一个特殊的IP地址，表示"绑定到所有网络接口"，
+      它不是一个可访问的URL。服务器使用 0.0.0.0 来监听所有
+      网络接口的连接，但您需要使用以下地址访问：
+
+正确访问地址：
+1. http://localhost:8000
+2. http://127.0.0.1:8000
+
+快速启动：
+1. 运行 run.bat
+2. 输入 Y 自动打开浏览器
+3. 或手动访问 http://localhost:8000
+
+API接口：
+- 主页: http://localhost:8000/
+- API文档: http://localhost:8000/docs (Swagger UI)
+- 患者列表: http://localhost:8000/api/patients
+- 模型状态: http://localhost:8000/api/models/status
+
+前端对接示例：
+在完整功能版_6.html中添加以下JavaScript代码：
+
+// 上传图像分析
+async function uploadImage(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('patient_id', 'P001');
+
+    const response = await fetch('http://localhost:8000/api/analyze', {
+        method: 'POST',
+        body: formData
+    });
+    return await response.json();
+}
+
+// 获取患者列表
+async function getPatients() {
+    const response = await fetch('http://localhost:8000/api/patients');
+    return await response.json();
+}
+
+常见问题：
+1. 防火墙阻止：确保允许Python通过防火墙
+2. 端口占用：如果8000端口被占用，修改backend.py中的port=8000为其他端口
+3. 依赖缺失：运行 pip install -r requirements.txt
+
+紧急解决方案：
+如果仍然无法访问，尝试：
+1. 使用命令提示符(管理员)运行
+2. 临时关闭防火墙
+3. 修改端口为8080：编辑backend.py，将port=8000改为port=8080
