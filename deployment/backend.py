@@ -293,9 +293,7 @@ class FractureDetectionSystem:
             try:
                 logger.info("加载 YOLO 模型...")
                 # 在加载YOLO模型前添加必要的安全全局变量
-                import torch.serialization
-                import torch.nn.modules.container
-                import torch.nn
+                # 注意：torch已经在文件顶部导入，直接使用torch.serialization
 
                 # 添加PyTorch常见类到安全全局列表
                 torch.serialization.add_safe_globals([
