@@ -56,6 +56,14 @@ try:
         torch.nn.AdaptiveAvgPool2d,
         torch.nn.AdaptiveMaxPool2d,
         torch.nn.Sigmoid,
+        torch.nn.modules.activation.SiLU,
+        torch.nn.SiLU,
+        torch.nn.LeakyReLU,
+        torch.nn.modules.activation.LeakyReLU,
+        torch.nn.Hardswish,
+        torch.nn.modules.activation.Hardswish,
+        torch.nn.GELU,
+        torch.nn.modules.activation.GELU,
         torch.nn.Module,
         torch.nn.Parameter,
         object  # 基础对象
@@ -290,6 +298,14 @@ class FractureDetectionSystem:
                     torch.nn.AdaptiveAvgPool2d,
                     torch.nn.AdaptiveMaxPool2d,
                     torch.nn.Sigmoid,
+                    torch.nn.modules.activation.SiLU,
+                    torch.nn.SiLU,
+                    torch.nn.LeakyReLU,
+                    torch.nn.modules.activation.LeakyReLU,
+                    torch.nn.Hardswish,
+                    torch.nn.modules.activation.Hardswish,
+                    torch.nn.GELU,
+                    torch.nn.modules.activation.GELU,
                     object
                 ])
 
