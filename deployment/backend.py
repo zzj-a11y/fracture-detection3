@@ -155,6 +155,7 @@ YOLO_MODEL_PATH = os.path.join(BASE_DIR, "runs", "yolov8_fracture_best.pt")
 # 上传目录：使用临时目录以确保可写性
 UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "fracture_uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+logger.info(f"上传目录设置为: {UPLOAD_DIR}")
 
 # 分类阈值（可根据验证集调整）
 CLASSIFICATION_THRESHOLD = 0.7  # 提高阈值，减少误报
@@ -777,6 +778,13 @@ async def analyze_image(
 
             # 生成可访问的图片 URL
             image_url = f"/uploads/{filename}"
+
+            # 记录分析结果详情，用于调试
+            logger.info(f"分析结果详情 - 分类概率: {analysis_result['classification']['probability']:.3f}, "
+                       f"分类预测: {analysis_result['classification']['prediction']}, "
+                       f"YOLO检测数: {len(analysis_result['detections'])}, "
+                       f"最终预测: {analysis_result['final_prediction']}, "
+                       f"图像URL: {image_url}")
 
             # 返回结果
             return JSONResponse({
