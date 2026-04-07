@@ -5537,6 +5537,11 @@
                         apiResult: apiResult.data
                     };
 
+                    // 更新当前图像URL为服务器上的图片
+                    if (apiResult.data.image_url) {
+                        window.currentImageUrl = apiResult.data.image_url;
+                    }
+
                     // 显示分析结果
                     displayAnalysisResult(result);
 
@@ -5680,10 +5685,28 @@
 
             visualizationArea.innerHTML = visualizationHTML;
 
-            // 添加标注框（模拟）
-            setTimeout(() => {
+            // 等待图像加载完成后添加标注框
+            const img = document.getElementById('analysis-image');
+            if (img && img.complete) {
+                // 图像已加载完成
                 addAnnotationBoxes(result);
-            }, 100);
+            } else if (img) {
+                // 图像未加载完成，添加加载事件监听器
+                img.onload = function() {
+                    addAnnotationBoxes(result);
+                };
+                img.onerror = function() {
+                    // 如果图像加载失败，仍然尝试添加标注框
+                    setTimeout(() => {
+                        addAnnotationBoxes(result);
+                    }, 100);
+                };
+            } else {
+                // 没有图像元素，延迟添加标注框
+                setTimeout(() => {
+                    addAnnotationBoxes(result);
+                }, 100);
+            }
         }
 
         function addAnnotationBoxes(result) {
@@ -5693,9 +5716,45 @@
             // 清空现有标注
             overlay.innerHTML = '';
 
-            // 添加标注框
-            if (result.hasFracture) {
-                // 添加骨折区域标注框
+            // 检查是否有实际检测结果
+            const hasDetections = result.apiResult && result.apiResult.detections && result.apiResult.detections.length > 0;
+
+            if (hasDetections) {
+                // 使用实际检测结果添加标注框
+                const detections = result.apiResult.detections;
+
+                // 获取图像元素以计算尺寸
+                const img = document.getElementById('analysis-image');
+                let imgWidth = 1000; // 默认假设
+                let imgHeight = 1000;
+
+                if (img) {
+                    // 使用自然尺寸（原始图片尺寸）
+                    imgWidth = img.naturalWidth || img.clientWidth || 1000;
+                    imgHeight = img.naturalHeight || img.clientHeight || 1000;
+                }
+
+                for (const detection of detections) {
+                    const bbox = detection.bbox;
+                    if (!bbox) continue;
+
+                    // 将像素坐标转换为百分比（相对于图像）
+                    const leftPercent = (bbox.x1 / imgWidth) * 100;
+                    const topPercent = (bbox.y1 / imgHeight) * 100;
+                    const widthPercent = ((bbox.x2 - bbox.x1) / imgWidth) * 100;
+                    const heightPercent = ((bbox.y2 - bbox.y1) / imgHeight) * 100;
+
+                    const detectionBox = document.createElement('div');
+                    detectionBox.className = 'annotation-box fracture';
+                    detectionBox.style.left = `${leftPercent}%`;
+                    detectionBox.style.top = `${topPercent}%`;
+                    detectionBox.style.width = `${widthPercent}%`;
+                    detectionBox.style.height = `${heightPercent}%`;
+                    detectionBox.innerHTML = `<div class="confidence-label">${detection.class || '骨折'} ${(detection.confidence * 100).toFixed(1)}%</div>`;
+                    overlay.appendChild(detectionBox);
+                }
+            } else if (result.hasFracture) {
+                // 没有实际检测结果，但分类结果为阳性，使用模拟标注框
                 const fractureBox = document.createElement('div');
                 fractureBox.className = 'annotation-box fracture';
                 fractureBox.style.left = '30%';
@@ -5704,17 +5763,8 @@
                 fractureBox.style.height = '20%';
                 fractureBox.innerHTML = `<div class="confidence-label">${(result.confidence * 100).toFixed(1)}%</div>`;
                 overlay.appendChild(fractureBox);
-
-                // 添加解剖标记点
-                for (let i = 0; i < 5; i++) {
-                    const landmark = document.createElement('div');
-                    landmark.className = 'landmark-point';
-                    landmark.style.left = `${20 + i * 15}%`;
-                    landmark.style.top = `${60 + Math.sin(i) * 10}%`;
-                    overlay.appendChild(landmark);
-                }
             } else {
-                // 添加正常区域标注框
+                // 阴性结果，显示正常区域
                 const normalBox = document.createElement('div');
                 normalBox.className = 'annotation-box normal';
                 normalBox.style.left = '35%';
@@ -5723,15 +5773,6 @@
                 normalBox.style.height = '25%';
                 normalBox.innerHTML = `<div class="confidence-label">正常</div>`;
                 overlay.appendChild(normalBox);
-
-                // 添加解剖标记点
-                for (let i = 0; i < 5; i++) {
-                    const landmark = document.createElement('div');
-                    landmark.className = 'landmark-point';
-                    landmark.style.left = `${20 + i * 15}%`;
-                    landmark.style.top = `${60 + Math.sin(i) * 10}%`;
-                    overlay.appendChild(landmark);
-                }
             }
         }
 
