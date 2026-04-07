@@ -260,6 +260,14 @@ val_test_transform = transforms.Compose([
     transforms.Normalize(mean=[0.485], std=[0.229])
 ])
 
+# 简化版变换（CPU环境下使用，跳过CLAHE增强以提高速度）
+val_test_transform_simple = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.Grayscale(num_output_channels=1),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485], std=[0.229])
+])
+
 tta_transforms = [
     val_test_transform,
     transforms.Compose([
@@ -280,6 +288,25 @@ tta_transforms = [
     ])
 ]
 
+# CPU环境下使用简化版TTA
+tta_transforms_simple = [
+    val_test_transform_simple,
+    transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.Grayscale(num_output_channels=1),
+        transforms.RandomHorizontalFlip(p=1.0),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485], std=[0.229])
+    ]),
+    transforms.Compose([
+        transforms.Resize((240, 240)),
+        transforms.Grayscale(num_output_channels=1),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485], std=[0.229])
+    ])
+]
+
 class FractureDetectionSystem:
     """骨折检测系统"""
 
@@ -290,7 +317,16 @@ class FractureDetectionSystem:
         self.classification_threshold = CLASSIFICATION_THRESHOLD
         self.yolo_confidence = YOLO_CONFIDENCE
         self.temperature = TEMPERATURE
-        self.tta_transforms = tta_transforms
+
+        # 在CPU环境下使用简化版转换以节省内存和时间
+        if str(self.device) == 'cpu':
+            logger.info("CPU环境检测到，使用简化版图像变换（跳过CLAHE增强）")
+            self.tta_transforms = tta_transforms_simple
+            self.val_test_transform = val_test_transform_simple
+        else:
+            self.tta_transforms = tta_transforms
+            self.val_test_transform = val_test_transform
+
         self.load_models()
 
     def load_models(self):
@@ -404,7 +440,7 @@ class FractureDetectionSystem:
                 prob = np.mean(tta_probs)
             else:
                 with torch.no_grad():
-                    tensor = val_test_transform(img_pil).unsqueeze(0).to(self.device)
+                    tensor = self.val_test_transform(img_pil).unsqueeze(0).to(self.device)
                     logits = self.classification_model(tensor)
                     prob = torch.sigmoid(logits / self.temperature).item()
 
@@ -424,7 +460,8 @@ class FractureDetectionSystem:
             return []
 
         try:
-            results = self.yolo_model(image_path, conf=self.yolo_confidence, iou=0.4)
+            # 使用较小的图像尺寸以节省内存 (320x320)
+            results = self.yolo_model(image_path, conf=self.yolo_confidence, iou=0.4, imgsz=320)
             detections = []
 
             if results[0].boxes is not None:
@@ -440,6 +477,7 @@ class FractureDetectionSystem:
                             "x2": int(x2), "y2": int(y2)
                         }
                     })
+                logger.info(f"YOLO检测完成，检测到 {len(detections)} 个目标")
             return detections
         except Exception as e:
             logger.error(f"YOLO 检测失败: {e}")
@@ -448,18 +486,22 @@ class FractureDetectionSystem:
     def analyze_image(self, image_path: str, patient_id: Optional[str] = None):
         """综合分析图像：分类 + YOLO 检测"""
         try:
-            # 分类
-            classification_result = self.classify_image(image_path, use_tta=True)
-            logger.info(f"分类结果: 原始概率={classification_result['probability']:.3f}, 预测={classification_result['prediction']}, 阈值={classification_result['threshold']}")
+            # 分类 - 禁用TTA以加快速度
+            classify_start = time.time()
+            classification_result = self.classify_image(image_path, use_tta=False)
+            classify_time = time.time() - classify_start
+            logger.info(f"分类结果: 原始概率={classification_result['probability']:.3f}, 预测={classification_result['prediction']}, 阈值={classification_result['threshold']}, 耗时: {classify_time:.2f}秒")
 
             # YOLO 检测
+            yolo_start = time.time()
             yolo_detections = self.detect_fracture_yolo(image_path)
+            yolo_time = time.time() - yolo_start
             has_fracture_bbox = len(yolo_detections) > 0
             if yolo_detections:
                 max_conf = max([d['confidence'] for d in yolo_detections])
-                logger.info(f"YOLO检测: 检测数={len(yolo_detections)}, 最高置信度={max_conf:.3f}, 阈值={self.yolo_confidence}")
+                logger.info(f"YOLO检测: 检测数={len(yolo_detections)}, 最高置信度={max_conf:.3f}, 阈值={self.yolo_confidence}, 耗时: {yolo_time:.2f}秒")
             else:
-                logger.info(f"YOLO检测: 无检测结果, 阈值={self.yolo_confidence}")
+                logger.info(f"YOLO检测: 无检测结果, 阈值={self.yolo_confidence}, 耗时: {yolo_time:.2f}秒")
 
             # 联合判断（分类概率 >= 阈值 且 YOLO 检测到骨折区域）
             final_prediction = 1 if (
@@ -675,50 +717,87 @@ async def analyze_image(
     - patient_id: 患者ID（可选）
     - use_yolo: 是否使用 YOLO 进行病灶检测
     """
-    # 验证文件类型
-    allowed_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff'}
-    file_ext = os.path.splitext(file.filename)[1].lower()
-    if file_ext not in allowed_extensions:
-        raise HTTPException(
-            status_code=400,
-            detail=f"不支持的文件类型。仅支持: {', '.join(allowed_extensions)}"
-        )
-
-    # 保存上传的文件
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{timestamp}_{file.filename}"
-    file_path = os.path.join(UPLOAD_DIR, filename)
-
+    file_path = None
     try:
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        logger.info(f"文件已保存: {file_path}")
+        # 验证文件类型
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff'}
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"不支持的文件类型。仅支持: {', '.join(allowed_extensions)}"
+            )
+
+        # 检查文件大小（限制为10MB）
+        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+        file_size = 0
+        # 获取文件大小
+        file.file.seek(0, 2)  # 移动到文件末尾
+        file_size = file.file.tell()
+        file.file.seek(0)  # 重置到文件开头
+
+        if file_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"文件过大（{file_size / (1024*1024):.1f}MB）。最大支持10MB。"
+            )
+
+        # 检查是否为PNG格式（用户上传的是PNG）
+        if file_ext == '.png':
+            logger.info(f"PNG图像上传: {file.filename}, 大小: {file_size / 1024:.1f}KB")
+
+        # 保存上传的文件
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{timestamp}_{file.filename}"
+        file_path = os.path.join(UPLOAD_DIR, filename)
+
+        try:
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            logger.info(f"文件已保存: {file_path}")
+        except Exception as e:
+            logger.error(f"保存文件失败: {e}")
+            raise HTTPException(status_code=500, detail="文件保存失败")
+
+        try:
+            # 分析图像
+            start_time = time.time()
+            logger.info(f"开始分析图像: {filename}")
+            analysis_result = detection_system.analyze_image(file_path, patient_id)
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            logger.info(f"图像分析完成: {filename}, 耗时: {elapsed_time:.2f}秒")
+
+            # 生成可访问的图片 URL
+            image_url = f"/uploads/{filename}"
+
+            # 返回结果
+            return JSONResponse({
+                "success": True,
+                "message": "分析完成",
+                "data": {
+                    **analysis_result,
+                    "image_url": image_url
+                }
+            })
+        except Exception as e:
+            logger.error(f"分析过程出错: {e}", exc_info=True)
+            # 清理上传的文件
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info(f"清理文件: {file_path}")
+            raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
+
+    except HTTPException:
+        # 重新抛出HTTP异常
+        raise
     except Exception as e:
-        logger.error(f"保存文件失败: {e}")
-        raise HTTPException(status_code=500, detail="文件保存失败")
-
-    try:
-        # 分析图像
-        analysis_result = detection_system.analyze_image(file_path, patient_id)
-
-        # 生成可访问的图片 URL
-        image_url = f"/uploads/{filename}"
-
-        # 返回结果
-        return JSONResponse({
-            "success": True,
-            "message": "分析完成",
-            "data": {
-                **analysis_result,
-                "image_url": image_url
-            }
-        })
-    except Exception as e:
-        logger.error(f"分析过程出错: {e}")
+        logger.error(f"未预期的错误: {e}", exc_info=True)
         # 清理上传的文件
-        if os.path.exists(file_path):
+        if file_path and os.path.exists(file_path):
             os.remove(file_path)
-        raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
+            logger.info(f"清理文件: {file_path}")
+        raise HTTPException(status_code=500, detail="服务器内部错误")
 
 @app.get("/api/analysis/{filename}")
 async def get_analysis_result(filename: str):
