@@ -177,7 +177,7 @@ except Exception as e:
 
 # 分类阈值（可根据验证集调整）
 CLASSIFICATION_THRESHOLD = 0.7  # 提高阈值，减少误报
-YOLO_CONFIDENCE = 0.3          # 降低YOLO置信度阈值，增加检测灵敏度
+YOLO_CONFIDENCE = 0.4          # 提高YOLO置信度阈值，减少误报
 TEMPERATURE = 1.5              # 温度缩放参数，>1降低概率，<1提高概率
 
 # 图像预处理
@@ -235,8 +235,29 @@ class CBAM(nn.Module):
 
 def build_model():
     """构建分类模型（与原脚本一致）"""
-    weights = EfficientNet_B0_Weights.IMAGENET1K_V1
-    model = efficientnet_b0(weights=weights)
+    model = None
+
+    # 尝试加载预训练权重，如果失败则创建无预训练权重的模型
+    weight_options = [
+        ('IMAGENET1K_V1', EfficientNet_B0_Weights.IMAGENET1K_V1),
+        ('DEFAULT', EfficientNet_B0_Weights.DEFAULT)
+    ]
+
+    for weight_name, weight in weight_options:
+        try:
+            logger.info(f"尝试加载 EfficientNet-B0 预训练权重: {weight_name}...")
+            model = efficientnet_b0(weights=weight)
+            logger.info(f"✅ EfficientNet-B0 预训练权重 {weight_name} 加载成功")
+            break
+        except Exception as e:
+            logger.warning(f"预训练权重 {weight_name} 加载失败: {e}")
+            continue
+
+    # 如果所有预训练权重都失败，创建无预训练权重的模型
+    if model is None:
+        logger.info("所有预训练权重加载失败，创建无预训练权重的模型...")
+        model = efficientnet_b0(weights=None)
+        logger.info("✅ 创建无预训练权重的模型成功")
 
     # 修改第一层为单通道输入
     model.features[0][0] = nn.Conv2d(1, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
@@ -518,19 +539,19 @@ class FractureDetectionSystem:
             logger.info(f"开始YOLO检测，图像路径: {image_path}, 置信度阈值: {self.yolo_confidence}, 内存: {mem_before:.2f} MB")
 
             try:
-                results = self.yolo_model(image_path, conf=self.yolo_confidence, iou=0.3, imgsz=224, max_det=10, verbose=False)
+                results = self.yolo_model(image_path, conf=self.yolo_confidence, iou=0.5, imgsz=320, max_det=10, verbose=False)
             except Exception as inference_error:
                 logger.error(f"YOLO推理失败: {inference_error}")
                 # 尝试更小的尺寸
-                logger.info("尝试更小的图像尺寸: 160x160")
+                logger.info("尝试更小的图像尺寸: 224x224")
                 try:
-                    results = self.yolo_model(image_path, conf=self.yolo_confidence, iou=0.3, imgsz=160, max_det=10, verbose=False)
+                    results = self.yolo_model(image_path, conf=self.yolo_confidence, iou=0.5, imgsz=224, max_det=10, verbose=False)
                 except Exception as retry_error:
                     logger.error(f"重试也失败: {retry_error}")
                     # 尝试更小的尺寸
-                    logger.info("尝试更小的图像尺寸: 128x128")
+                    logger.info("尝试更小的图像尺寸: 160x160")
                     try:
-                        results = self.yolo_model(image_path, conf=self.yolo_confidence, iou=0.3, imgsz=128, max_det=10, verbose=False)
+                        results = self.yolo_model(image_path, conf=self.yolo_confidence, iou=0.5, imgsz=160, max_det=10, verbose=False)
                     except Exception as retry2_error:
                         logger.error(f"第三次尝试也失败: {retry2_error}")
                         return []
@@ -542,19 +563,75 @@ class FractureDetectionSystem:
             logger.info(f"YOLO检测完成，内存使用: {mem_after:.2f} MB (+{mem_after - mem_before:.2f} MB)")
 
             if results[0].boxes is not None:
+                # 获取原始图像尺寸
+                if hasattr(results[0], 'orig_shape'):
+                    orig_height, orig_width = results[0].orig_shape
+                else:
+                    # 如果没有orig_shape，使用PIL读取图像尺寸
+                    try:
+                        from PIL import Image
+                        with Image.open(image_path) as img:
+                            orig_width, orig_height = img.size
+                    except:
+                        # 备用默认尺寸
+                        orig_width, orig_height = 1000, 1000
+
                 for box in results[0].boxes:
                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                     conf = box.conf[0].cpu().numpy()
                     cls = self.yolo_model.names[int(box.cls[0].cpu().numpy())]
+
+                    # 转换为整数
+                    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+
+                    # 应用过滤规则
+                    # 1. 置信度过滤 (提高到0.45)
+                    if conf < 0.45:
+                        continue
+
+                    # 2. 边缘过滤：如果框的任意一边距离图像边缘小于5%，则过滤
+                    edge_threshold = 0.05  # 5%
+                    if (x1 < edge_threshold * orig_width or
+                        y1 < edge_threshold * orig_height or
+                        x2 > (1 - edge_threshold) * orig_width or
+                        y2 > (1 - edge_threshold) * orig_height):
+                        continue
+
+                    # 3. 面积过滤：面积小于图像总面积的0.5%
+                    box_area = (x2 - x1) * (y2 - y1)
+                    image_area = orig_width * orig_height
+                    if box_area < 0.005 * image_area:  # 0.5%
+                        continue
+
+                    # 4. 可选：将框向图像中心调整（假设手腕在中心区域）
+                    center_adjustment = 0.2  # 调整幅度20%
+                    if center_adjustment > 0:
+                        # 计算框中心点
+                        center_x = (x1 + x2) / 2
+                        center_y = (y1 + y2) / 2
+                        # 计算图像中心点
+                        img_center_x = orig_width / 2
+                        img_center_y = orig_height / 2
+                        # 将框中心点向图像中心移动一定比例
+                        new_center_x = center_x + (img_center_x - center_x) * center_adjustment
+                        new_center_y = center_y + (img_center_y - center_y) * center_adjustment
+                        # 计算调整后的框坐标（保持框尺寸不变）
+                        width = x2 - x1
+                        height = y2 - y1
+                        x1 = int(max(0, new_center_x - width / 2))
+                        y1 = int(max(0, new_center_y - height / 2))
+                        x2 = int(min(orig_width, new_center_x + width / 2))
+                        y2 = int(min(orig_height, new_center_y + height / 2))
+
                     detections.append({
                         "class": cls,
                         "confidence": float(conf),
                         "bbox": {
-                            "x1": int(x1), "y1": int(y1),
-                            "x2": int(x2), "y2": int(y2)
+                            "x1": x1, "y1": y1,
+                            "x2": x2, "y2": y2
                         }
                     })
-                logger.info(f"YOLO检测完成，检测到 {len(detections)} 个目标")
+                logger.info(f"YOLO检测完成，原始检测到 {len(results[0].boxes)} 个目标，过滤后剩余 {len(detections)} 个")
             else:
                 logger.info("YOLO检测完成，未检测到任何目标")
 
@@ -960,8 +1037,10 @@ async def analyze_image(
             elapsed_time = end_time - start_time
             logger.info(f"图像分析完成: {filename}, 耗时: {elapsed_time:.2f}秒")
 
-            # 生成可访问的图片 URL
-            image_url = f"/uploads/{filename}"
+            # 生成可访问的图片 URL，对文件名进行URL编码
+            import urllib.parse
+            encoded_filename = urllib.parse.quote(filename)
+            image_url = f"/uploads/{encoded_filename}"
 
             # 记录分析结果详情，用于调试
             logger.info(f"分析结果详情 - 分类概率: {analysis_result['classification']['probability']:.3f}, "
