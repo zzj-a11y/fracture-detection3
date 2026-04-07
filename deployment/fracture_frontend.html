@@ -2899,7 +2899,26 @@
     <!-- 全局脚本 -->
     <script>
         // 骨折检测API库 - 连接到后端服务
-        const API_BASE_URL = window.location.origin;
+        // 自动检测开发环境：如果使用 file:// 协议或本地开发，使用固定后端地址
+        const API_BASE_URL = (() => {
+            const origin = window.location.origin;
+            const hostname = window.location.hostname;
+
+            // 如果是 file:// 协议或本地文件访问
+            if (origin === 'null' || origin.startsWith('file://')) {
+                return 'http://localhost:8000';
+            }
+
+            // 如果是 localhost 或 127.0.0.1
+            if (hostname === 'localhost' || hostname === '127.0.0.1') {
+                return origin; // 保持 localhost:端口
+            }
+
+            // 生产环境使用当前域名
+            return origin;
+        })();
+
+        console.log('API_BASE_URL 设置为:', API_BASE_URL);
 
         // 1. 图像分析上传
         async function analyzeImage(file, patientId = null) {
@@ -5573,7 +5592,13 @@
 
                     // 更新当前图像URL为服务器上的图片
                     if (apiResult.data.image_url) {
-                        window.currentImageUrl = apiResult.data.image_url;
+                        let imageUrl = apiResult.data.image_url;
+                        // 如果URL是相对路径（以/开头），加上API_BASE_URL前缀
+                        if (imageUrl.startsWith('/')) {
+                            imageUrl = API_BASE_URL + imageUrl;
+                        }
+                        window.currentImageUrl = imageUrl;
+                        console.log('设置当前图像URL:', window.currentImageUrl);
                     }
 
                     // 显示分析结果
@@ -5747,6 +5772,11 @@
                     addAnnotationBoxes(result);
                 };
                 img.onerror = function() {
+                    console.error('图像加载失败:', window.currentImageUrl, this.src);
+                    // 尝试使用不同的URL格式
+                    if (this.src.startsWith('http://') && window.location.protocol === 'file:') {
+                        console.warn('文件协议下尝试加载HTTP资源，可能存在CORS问题');
+                    }
                     // 如果图像加载失败，仍然尝试添加标注框
                     setTimeout(() => {
                         addAnnotationBoxes(result);
