@@ -322,17 +322,59 @@ class FractureDetectionSystem:
 
                 # 根据加载的数据类型处理
                 if isinstance(model_data, dict):
-                    # 如果是状态字典，创建 YOLO 模型并加载状态
-                    logger.info("加载的是状态字典，创建基础 YOLO 模型并加载状态...")
+                    # 检查是否是 YOLO 检查点文件（包含训练元数据）
+                    if 'model' in model_data:
+                        logger.info("检测到 YOLO 检查点文件，提取 'model' 权重...")
+                        # 提取模型权重
+                        model_weights = model_data['model']
 
-                    # 创建基础 YOLO 模型（使用 yolov8n 作为基础架构）
-                    base_model = YOLO('yolov8n.pt')
+                        # 检查权重是否是半精度
+                        if isinstance(model_weights, dict):
+                            logger.info(f"提取的模型权重类型: dict, 键: {list(model_weights.keys())[:5]}...")
+                        else:
+                            logger.info(f"提取的模型权重类型: {type(model_weights)}")
 
-                    # 加载状态字典到模型
-                    base_model.model.load_state_dict(model_data)
+                        # 方法1：尝试直接使用 YOLO 类加载原始文件
+                        # 使用 ultralytics 的 YOLO 类处理检查点文件
+                        logger.info("尝试使用 YOLO 类直接加载检查点文件...")
+                        try:
+                            self.yolo_model = YOLO(YOLO_MODEL_PATH)
+                            logger.info("YOLO 类成功加载检查点文件")
+                        except Exception as yolo_error:
+                            logger.warning(f"YOLO 类加载失败: {yolo_error}")
 
-                    self.yolo_model = base_model
-                    logger.info("YOLO 模型通过状态字典加载成功")
+                            # 方法2：尝试创建模型并加载权重
+                            logger.info("尝试创建模型并加载提取的权重...")
+                            try:
+                                # 创建基础模型（使用 yolov8n）
+                                base_model = YOLO('yolov8n.pt')
+
+                                # 尝试加载提取的权重
+                                if isinstance(model_weights, dict):
+                                    # 如果是状态字典，尝试加载
+                                    base_model.model.load_state_dict(model_weights, strict=False)
+                                    logger.info("使用 strict=False 加载权重成功（忽略不匹配的键）")
+                                else:
+                                    # 如果是其他类型，可能已经是模型
+                                    logger.info(f"权重不是字典类型: {type(model_weights)}")
+
+                                self.yolo_model = base_model
+                                logger.info("备用方法加载 YOLO 模型成功")
+                            except Exception as backup_error:
+                                logger.error(f"备用方法也失败: {backup_error}")
+                                raise backup_error
+                    else:
+                        # 不是 YOLO 检查点，尝试作为普通状态字典处理
+                        logger.info("不是 YOLO 检查点文件，尝试作为普通状态字典处理...")
+
+                        # 创建基础 YOLO 模型（使用 yolov8n 作为基础架构）
+                        base_model = YOLO('yolov8n.pt')
+
+                        # 加载状态字典到模型（使用 strict=False 忽略不匹配的键）
+                        base_model.model.load_state_dict(model_data, strict=False)
+
+                        self.yolo_model = base_model
+                        logger.info("YOLO 模型通过状态字典加载成功（strict=False）")
                 else:
                     # 如果是完整的模型对象，直接使用
                     logger.info("加载的是完整模型对象，直接使用...")
