@@ -7,6 +7,7 @@ import os
 import sys
 import logging
 from pathlib import Path
+import tempfile
 import numpy as np
 import cv2
 from PIL import Image
@@ -151,12 +152,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # 模型路径（使用绝对路径）
 CLASSIFICATION_MODEL_PATH = os.path.join(BASE_DIR, "model", "model_3.pth")
 YOLO_MODEL_PATH = os.path.join(BASE_DIR, "runs", "yolov8_fracture_best.pt")
-UPLOAD_DIR = os.path.join(BASE_DIR, "exit", "uploads")
+# 上传目录：使用临时目录以确保可写性
+UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "fracture_uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # 分类阈值（可根据验证集调整）
 CLASSIFICATION_THRESHOLD = 0.7  # 提高阈值，减少误报
-YOLO_CONFIDENCE = 0.7          # 进一步提高YOLO置信度阈值，减少误检
+YOLO_CONFIDENCE = 0.3          # 降低YOLO置信度阈值，增加检测灵敏度
 TEMPERATURE = 1.5              # 温度缩放参数，>1降低概率，<1提高概率
 
 # 图像预处理
@@ -461,8 +463,11 @@ class FractureDetectionSystem:
 
         try:
             # 使用较小的图像尺寸以节省内存 (320x320)
+            logger.info(f"开始YOLO检测，图像路径: {image_path}, 置信度阈值: {self.yolo_confidence}")
             results = self.yolo_model(image_path, conf=self.yolo_confidence, iou=0.4, imgsz=320)
             detections = []
+
+            logger.info(f"YOLO检测原始结果: {results}")
 
             if results[0].boxes is not None:
                 for box in results[0].boxes:
@@ -478,6 +483,8 @@ class FractureDetectionSystem:
                         }
                     })
                 logger.info(f"YOLO检测完成，检测到 {len(detections)} 个目标")
+            else:
+                logger.info("YOLO检测完成，未检测到任何目标")
             return detections
         except Exception as e:
             logger.error(f"YOLO 检测失败: {e}")
