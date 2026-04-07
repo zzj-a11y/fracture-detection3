@@ -18,6 +18,10 @@ import torch.serialization
 from torchvision import transforms
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 import warnings
+import psutil
+import gc
+import asyncio
+import concurrent.futures
 warnings.filterwarnings('ignore')
 
 # 检查 multipart 依赖
@@ -156,6 +160,20 @@ YOLO_MODEL_PATH = os.path.join(BASE_DIR, "runs", "yolov8_fracture_best.pt")
 UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "fracture_uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 logger.info(f"上传目录设置为: {UPLOAD_DIR}")
+
+# 检查上传目录是否可写
+try:
+    test_file = os.path.join(UPLOAD_DIR, "test_write.tmp")
+    with open(test_file, "w") as f:
+        f.write("test")
+    os.remove(test_file)
+    logger.info(f"上传目录可写性检查通过: {UPLOAD_DIR}")
+except Exception as e:
+    logger.error(f"上传目录不可写: {UPLOAD_DIR}, 错误: {e}")
+    # 尝试使用当前目录下的上传目录作为备选
+    UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    logger.info(f"切换到备选上传目录: {UPLOAD_DIR}")
 
 # 分类阈值（可根据验证集调整）
 CLASSIFICATION_THRESHOLD = 0.7  # 提高阈值，减少误报
@@ -335,13 +353,37 @@ class FractureDetectionSystem:
     def load_models(self):
         """加载分类和 YOLO 模型"""
         try:
+            # 记录初始内存使用
+            process = psutil.Process()
+            mem_before = process.memory_info().rss / (1024 * 1024)  # MB
+            logger.info(f"模型加载前内存: {mem_before:.2f} MB")
+
             logger.info("加载分类模型...")
             self.classification_model = build_model()
-            self.classification_model.load_state_dict(
-                torch.load(CLASSIFICATION_MODEL_PATH, map_location=self.device, weights_only=False)
-            )
+
+            # 使用更省内存的方式加载模型权重
+            try:
+                # 尝试使用 weights_only=True 以减少内存使用
+                state_dict = torch.load(CLASSIFICATION_MODEL_PATH, map_location=self.device, weights_only=True)
+            except RuntimeError:
+                # 如果失败，回退到 weights_only=False
+                logger.warning("无法使用weights_only=True加载模型，使用weights_only=False")
+                state_dict = torch.load(CLASSIFICATION_MODEL_PATH, map_location=self.device, weights_only=False)
+
+            self.classification_model.load_state_dict(state_dict)
             self.classification_model.eval()
-            logger.info(f"分类模型加载成功: {CLASSIFICATION_MODEL_PATH}")
+
+            # 立即删除state_dict以释放内存
+            del state_dict
+
+            # 强制垃圾回收
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            # 记录加载后内存使用
+            mem_after = process.memory_info().rss / (1024 * 1024)  # MB
+            logger.info(f"分类模型加载成功: {CLASSIFICATION_MODEL_PATH}, 内存使用: {mem_after:.2f} MB (+{mem_after - mem_before:.2f} MB)")
         except Exception as e:
             logger.error(f"加载分类模型失败: {e}")
             raise
@@ -350,77 +392,64 @@ class FractureDetectionSystem:
             try:
                 logger.info("加载 YOLO 模型...")
 
-                # 简单直接的方法：使用 torch.load 加载模型文件，设置 weights_only=False
-                # 这样可以绕过 PyTorch 2.6+ 的安全限制
-                logger.info(f"使用 torch.load(weights_only=False) 加载: {YOLO_MODEL_PATH}")
+                # 简化：直接使用 YOLO 类加载模型文件
+                # 设置简单参数以减少内存使用
+                try:
+                    self.yolo_model = YOLO(YOLO_MODEL_PATH)
+                    logger.info("YOLO 类成功加载模型文件")
+                except Exception as yolo_error:
+                    logger.warning(f"YOLO 类直接加载失败: {yolo_error}, 尝试备用方法...")
 
-                # 直接使用 torch.load 加载模型文件
-                # 根据错误信息，我们需要信任这个模型文件（来自用户自己的训练）
-                model_data = torch.load(YOLO_MODEL_PATH, map_location=self.device, weights_only=False)
-                logger.info(f"torch.load 成功，加载的数据类型: {type(model_data)}")
-
-                # 根据加载的数据类型处理
-                if isinstance(model_data, dict):
-                    # 检查是否是 YOLO 检查点文件（包含训练元数据）
-                    if 'model' in model_data:
-                        logger.info("检测到 YOLO 检查点文件，提取 'model' 权重...")
-                        # 提取模型权重
-                        model_weights = model_data['model']
-
-                        # 检查权重是否是半精度
-                        if isinstance(model_weights, dict):
-                            logger.info(f"提取的模型权重类型: dict, 键: {list(model_weights.keys())[:5]}...")
-                        else:
-                            logger.info(f"提取的模型权重类型: {type(model_weights)}")
-
-                        # 方法1：尝试直接使用 YOLO 类加载原始文件
-                        # 使用 ultralytics 的 YOLO 类处理检查点文件
-                        logger.info("尝试使用 YOLO 类直接加载检查点文件...")
-                        try:
-                            self.yolo_model = YOLO(YOLO_MODEL_PATH)
-                            logger.info("YOLO 类成功加载检查点文件")
-                        except Exception as yolo_error:
-                            logger.warning(f"YOLO 类加载失败: {yolo_error}")
-
-                            # 方法2：尝试创建模型并加载权重
-                            logger.info("尝试创建模型并加载提取的权重...")
-                            try:
-                                # 创建基础模型（使用 yolov8n）
-                                base_model = YOLO('yolov8n.pt')
-
-                                # 尝试加载提取的权重
-                                if isinstance(model_weights, dict):
-                                    # 如果是状态字典，尝试加载
-                                    base_model.model.load_state_dict(model_weights, strict=False)
-                                    logger.info("使用 strict=False 加载权重成功（忽略不匹配的键）")
-                                else:
-                                    # 如果是其他类型，可能已经是模型
-                                    logger.info(f"权重不是字典类型: {type(model_weights)}")
-
-                                self.yolo_model = base_model
-                                logger.info("备用方法加载 YOLO 模型成功")
-                            except Exception as backup_error:
-                                logger.error(f"备用方法也失败: {backup_error}")
-                                raise backup_error
-                    else:
-                        # 不是 YOLO 检查点，尝试作为普通状态字典处理
-                        logger.info("不是 YOLO 检查点文件，尝试作为普通状态字典处理...")
-
-                        # 创建基础 YOLO 模型（使用 yolov8n 作为基础架构）
+                    # 备用方法：使用基础模型
+                    try:
+                        # 创建基础模型（使用 yolov8n）
                         base_model = YOLO('yolov8n.pt')
 
-                        # 加载状态字典到模型（使用 strict=False 忽略不匹配的键）
-                        base_model.model.load_state_dict(model_data, strict=False)
+                        # 尝试加载自定义权重
+                        try:
+                            # 先尝试 weights_only=True 以减少内存
+                            model_data = torch.load(YOLO_MODEL_PATH, map_location=self.device, weights_only=True)
+                        except RuntimeError:
+                            # 回退到 weights_only=False
+                            logger.warning("无法使用weights_only=True加载，使用weights_only=False")
+                            model_data = torch.load(YOLO_MODEL_PATH, map_location=self.device, weights_only=False)
+
+                        if isinstance(model_data, dict):
+                            if 'model' in model_data:
+                                model_weights = model_data['model']
+                            else:
+                                model_weights = model_data
+                        else:
+                            model_weights = model_data
+
+                        # 加载权重到基础模型
+                        if isinstance(model_weights, dict):
+                            base_model.model.load_state_dict(model_weights, strict=False)
+                            logger.info("使用strict=False加载自定义权重成功")
 
                         self.yolo_model = base_model
-                        logger.info("YOLO 模型通过状态字典加载成功（strict=False）")
-                else:
-                    # 如果是完整的模型对象，直接使用
-                    logger.info("加载的是完整模型对象，直接使用...")
-                    self.yolo_model = model_data
-                    logger.info("YOLO 模型作为完整对象加载成功")
+                        logger.info("备用方法加载 YOLO 模型成功")
 
-                logger.info(f"YOLO 模型加载成功: {YOLO_MODEL_PATH}")
+                        # 清理临时变量
+                        del model_data, model_weights
+
+                    except Exception as backup_error:
+                        logger.error(f"备用方法也失败: {backup_error}")
+                        self.yolo_model = None
+
+                if self.yolo_model is not None:
+                    # 强制垃圾回收
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+
+                    # 记录YOLO加载后内存使用
+                    process = psutil.Process()
+                    mem_yolo = process.memory_info().rss / (1024 * 1024)  # MB
+                    logger.info(f"YOLO 模型加载成功: {YOLO_MODEL_PATH}, 总内存: {mem_yolo:.2f} MB")
+                else:
+                    logger.warning("YOLO 模型加载失败，将禁用 YOLO 检测功能")
+
             except Exception as e:
                 logger.error(f"加载 YOLO 模型失败: {e}")
                 self.yolo_model = None
@@ -431,6 +460,10 @@ class FractureDetectionSystem:
     def classify_image(self, image_path: str, use_tta: bool = True):
         """对单张图像进行分类"""
         try:
+            # 记录分类前内存
+            process = psutil.Process()
+            mem_before = process.memory_info().rss / (1024 * 1024)  # MB
+
             img_pil = Image.open(image_path).convert('L')
 
             if use_tta and self.tta_transforms:
@@ -448,6 +481,16 @@ class FractureDetectionSystem:
                     prob = torch.sigmoid(logits / self.temperature).item()
 
             prediction = 1 if prob >= self.classification_threshold else 0
+
+            # 记录分类后内存
+            mem_after = process.memory_info().rss / (1024 * 1024)  # MB
+            logger.info(f"分类完成，内存使用: {mem_after:.2f} MB (+{mem_after - mem_before:.2f} MB)")
+
+            # 分类后清理内存
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
             return {
                 "probability": float(prob),
                 "prediction": int(prediction),
@@ -455,6 +498,10 @@ class FractureDetectionSystem:
             }
         except Exception as e:
             logger.error(f"图像分类失败: {e}")
+            # 清理内存
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             raise
 
     def detect_fracture_yolo(self, image_path: str):
@@ -463,12 +510,36 @@ class FractureDetectionSystem:
             return []
 
         try:
-            # 使用较小的图像尺寸以节省内存 (320x320)
-            logger.info(f"开始YOLO检测，图像路径: {image_path}, 置信度阈值: {self.yolo_confidence}")
-            results = self.yolo_model(image_path, conf=self.yolo_confidence, iou=0.4, imgsz=320)
+            # 记录检测前内存
+            process = psutil.Process()
+            mem_before = process.memory_info().rss / (1024 * 1024)  # MB
+
+            # 使用更小的图像尺寸以节省内存 (224x224)
+            logger.info(f"开始YOLO检测，图像路径: {image_path}, 置信度阈值: {self.yolo_confidence}, 内存: {mem_before:.2f} MB")
+
+            try:
+                results = self.yolo_model(image_path, conf=self.yolo_confidence, iou=0.3, imgsz=224, max_det=10, verbose=False)
+            except Exception as inference_error:
+                logger.error(f"YOLO推理失败: {inference_error}")
+                # 尝试更小的尺寸
+                logger.info("尝试更小的图像尺寸: 160x160")
+                try:
+                    results = self.yolo_model(image_path, conf=self.yolo_confidence, iou=0.3, imgsz=160, max_det=10, verbose=False)
+                except Exception as retry_error:
+                    logger.error(f"重试也失败: {retry_error}")
+                    # 尝试更小的尺寸
+                    logger.info("尝试更小的图像尺寸: 128x128")
+                    try:
+                        results = self.yolo_model(image_path, conf=self.yolo_confidence, iou=0.3, imgsz=128, max_det=10, verbose=False)
+                    except Exception as retry2_error:
+                        logger.error(f"第三次尝试也失败: {retry2_error}")
+                        return []
+
             detections = []
 
-            logger.info(f"YOLO检测原始结果: {results}")
+            # 记录检测后内存
+            mem_after = process.memory_info().rss / (1024 * 1024)  # MB
+            logger.info(f"YOLO检测完成，内存使用: {mem_after:.2f} MB (+{mem_after - mem_before:.2f} MB)")
 
             if results[0].boxes is not None:
                 for box in results[0].boxes:
@@ -486,30 +557,97 @@ class FractureDetectionSystem:
                 logger.info(f"YOLO检测完成，检测到 {len(detections)} 个目标")
             else:
                 logger.info("YOLO检测完成，未检测到任何目标")
+
+            # 检测完成后强制垃圾回收
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
             return detections
         except Exception as e:
             logger.error(f"YOLO 检测失败: {e}")
+            # 异常时也要清理内存
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             return []
 
     def analyze_image(self, image_path: str, patient_id: Optional[str] = None):
         """综合分析图像：分类 + YOLO 检测"""
         try:
-            # 分类 - 禁用TTA以加快速度
-            classify_start = time.time()
-            classification_result = self.classify_image(image_path, use_tta=False)
-            classify_time = time.time() - classify_start
-            logger.info(f"分类结果: 原始概率={classification_result['probability']:.3f}, 预测={classification_result['prediction']}, 阈值={classification_result['threshold']}, 耗时: {classify_time:.2f}秒")
+            # 监控内存使用
+            process = psutil.Process()
+            mem_before = process.memory_info().rss / (1024 * 1024)  # MB
+            logger.info(f"开始综合分析图像: {image_path}, 内存: {mem_before:.2f} MB")
 
-            # YOLO 检测
-            yolo_start = time.time()
-            yolo_detections = self.detect_fracture_yolo(image_path)
-            yolo_time = time.time() - yolo_start
-            has_fracture_bbox = len(yolo_detections) > 0
-            if yolo_detections:
-                max_conf = max([d['confidence'] for d in yolo_detections])
-                logger.info(f"YOLO检测: 检测数={len(yolo_detections)}, 最高置信度={max_conf:.3f}, 阈值={self.yolo_confidence}, 耗时: {yolo_time:.2f}秒")
+            # 设置内存限制 (2.5GB，留一些空间给系统)
+            MEMORY_LIMIT_MB = 2500
+
+            # 检查内存是否接近限制
+            if mem_before > MEMORY_LIMIT_MB:
+                logger.warning(f"内存使用较高: {mem_before:.2f} MB > {MEMORY_LIMIT_MB} MB, 尝试垃圾回收")
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                mem_after_gc = process.memory_info().rss / (1024 * 1024)  # MB
+                logger.info(f"垃圾回收后内存: {mem_after_gc:.2f} MB")
+
+            # 分类 - 禁用TTA以加快速度，使用更小的图像尺寸
+            classify_start = time.time()
+            try:
+                classification_result = self.classify_image(image_path, use_tta=False)
+                classify_time = time.time() - classify_start
+                logger.info(f"分类成功: 原始概率={classification_result['probability']:.3f}, 预测={classification_result['prediction']}, 耗时: {classify_time:.2f}秒")
+            except Exception as e:
+                logger.error(f"分类失败: {e}")
+                classification_result = {
+                    "probability": 0.0,
+                    "prediction": 0,
+                    "threshold": self.classification_threshold
+                }
+
+            # YOLO 检测 - 增加异常处理和超时
+            yolo_detections = []
+            yolo_time = 0
+
+            # 如果分类结果很低概率，跳过YOLO检测以节省时间和内存
+            if classification_result["probability"] < 0.2:  # 如果概率低于20%，跳过检测
+                logger.info(f"分类概率较低 ({classification_result['probability']:.3f} < 0.2)，跳过YOLO检测")
             else:
-                logger.info(f"YOLO检测: 无检测结果, 阈值={self.yolo_confidence}, 耗时: {yolo_time:.2f}秒")
+                try:
+                    if self.yolo_model is not None:
+                        # 检查内存是否足够
+                        mem_before_yolo = process.memory_info().rss / (1024 * 1024)  # MB
+                        if mem_before_yolo > MEMORY_LIMIT_MB * 0.7:  # 如果内存使用超过70%
+                            logger.warning(f"内存使用较高 ({mem_before_yolo:.2f} MB)，跳过YOLO检测以节省内存")
+                        else:
+                            # 设置YOLO检测超时（20秒）
+                            yolo_start = time.time()
+                            try:
+                                # 使用线程池执行YOLO检测，设置超时
+                                import concurrent.futures
+                                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                                    yolo_future = executor.submit(self.detect_fracture_yolo, image_path)
+                                    yolo_detections = yolo_future.result(timeout=20.0)
+                            except concurrent.futures.TimeoutError:
+                                logger.warning("YOLO检测超时（20秒），返回空检测结果")
+                                yolo_detections = []
+                            except Exception as yolo_error:
+                                logger.error(f"YOLO检测失败: {yolo_error}")
+                                yolo_detections = []
+
+                            yolo_time = time.time() - yolo_start
+                            if yolo_detections:
+                                logger.info(f"YOLO检测完成: 检测数={len(yolo_detections)}, 耗时: {yolo_time:.2f}秒")
+                            else:
+                                logger.info(f"YOLO检测完成: 未检测到目标, 耗时: {yolo_time:.2f}秒")
+                    else:
+                        logger.warning("YOLO模型未加载，跳过检测")
+                except Exception as e:
+                    logger.error(f"YOLO检测失败: {e}")
+                    yolo_detections = []  # 确保返回空列表而不是None
+
+            has_fracture_bbox = len(yolo_detections) > 0
 
             # 联合判断（分类概率 >= 阈值 且 YOLO 检测到骨折区域）
             final_prediction = 1 if (
@@ -534,7 +672,15 @@ class FractureDetectionSystem:
                 patient_id
             )
 
-            logger.info(f"最终预测: {final_prediction}, 校准后概率={adjusted_classification['probability']:.3f}, 原始概率={original_prob:.3f}")
+            # 记录最终内存使用
+            process = psutil.Process()
+            mem_final = process.memory_info().rss / (1024 * 1024)  # MB
+            logger.info(f"综合分析完成: 最终预测={final_prediction}, 校准后概率={calibrated_prob:.3f}, 最终内存: {mem_final:.2f} MB")
+
+            # 分析完成后强制垃圾回收
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
             return {
                 "classification": adjusted_classification,  # 使用校准后的概率
@@ -545,8 +691,32 @@ class FractureDetectionSystem:
                 "timestamp": datetime.now().isoformat()
             }
         except Exception as e:
-            logger.error(f"图像分析失败: {e}")
-            raise
+            logger.error(f"图像分析失败: {e}", exc_info=True)
+            # 异常时清理内存
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            # 返回一个安全的默认结果，而不是让进程崩溃
+            return {
+                "classification": {
+                    "probability": 0.0,
+                    "prediction": 0,
+                    "threshold": self.classification_threshold
+                },
+                "detections": [],
+                "final_prediction": 0,
+                "report": {
+                    "patient_id": patient_id,
+                    "fracture_detected": False,
+                    "confidence_score": 0.0,
+                    "detection_count": 0,
+                    "recommendation": "分析过程中出现错误，请重试",
+                    "detailed_findings": []
+                },
+                "image_path": image_path,
+                "timestamp": datetime.now().isoformat()
+            }
 
     def generate_report(self, classification_result, detections, final_prediction, patient_id):
         """生成分析报告"""
@@ -768,10 +938,24 @@ async def analyze_image(
             raise HTTPException(status_code=500, detail="文件保存失败")
 
         try:
-            # 分析图像
+            # 分析图像（使用线程池执行，避免阻塞事件循环）
+            ANALYSIS_TIMEOUT = 55.0  # 55秒超时，略小于前端60秒
             start_time = time.time()
             logger.info(f"开始分析图像: {filename}")
-            analysis_result = detection_system.analyze_image(file_path, patient_id)
+
+            try:
+                # 将同步分析函数放到线程池中执行，并设置超时
+                analysis_result = await asyncio.wait_for(
+                    asyncio.to_thread(detection_system.analyze_image, file_path, patient_id),
+                    timeout=ANALYSIS_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                logger.error(f"分析超时: {ANALYSIS_TIMEOUT}秒")
+                raise HTTPException(status_code=504, detail=f"分析超时（{ANALYSIS_TIMEOUT}秒），请尝试使用更小的图像或稍后重试")
+            except Exception as e:
+                logger.error(f"分析过程出错: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
+
             end_time = time.time()
             elapsed_time = end_time - start_time
             logger.info(f"图像分析完成: {filename}, 耗时: {elapsed_time:.2f}秒")
@@ -795,6 +979,9 @@ async def analyze_image(
                     "image_url": image_url
                 }
             })
+        except HTTPException:
+            # 重新抛出HTTP异常
+            raise
         except Exception as e:
             logger.error(f"分析过程出错: {e}", exc_info=True)
             # 清理上传的文件
