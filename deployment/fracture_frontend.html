@@ -2899,7 +2899,7 @@
     <!-- 全局脚本 -->
     <script>
         // 骨折检测API库 - 连接到后端服务
-        const API_BASE_URL = '';
+        const API_BASE_URL = window.location.origin;
 
         // 1. 图像分析上传
         async function analyzeImage(file, patientId = null) {
@@ -2910,16 +2910,23 @@
                     formData.append('patient_id', patientId);
                 }
 
-                const response = await fetch(`${API_BASE_URL}/api/analyze`, {
+                const url = `${API_BASE_URL}/api/analyze`;
+                console.log('发起API请求到:', url, '文件:', file.name);
+                const response = await fetch(url, {
                     method: 'POST',
                     body: formData
                 });
 
+                console.log('API响应状态:', response.status, response.statusText);
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                    const errorText = await response.text();
+                    console.error('API错误响应:', errorText);
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
                 }
 
-                return await response.json();
+                const result = await response.json();
+                console.log('API成功响应:', result);
+                return result;
             } catch (error) {
                 console.error('图像分析失败:', error);
                 return {
@@ -5477,6 +5484,7 @@
         }
 
         function startAnalysis() {
+            console.log('开始分析，当前文件:', window.currentImageFile?.name);
             if (!window.currentImageFile) {
                 alert('请先上传图像');
                 return;
@@ -5514,8 +5522,10 @@
                 : null;
 
             // 执行真实API分析
+            console.log('调用API分析图像，患者ID:', patientId);
             FractureDetectionAPI.analyzeImage(window.currentImageFile, patientId)
                 .then(apiResult => {
+                    console.log('API响应:', apiResult);
                     if (!apiResult.success) {
                         throw new Error(apiResult.message || '分析失败');
                     }
@@ -5543,6 +5553,7 @@
                     }
 
                     // 显示分析结果
+                    console.log('调用displayAnalysisResult，图像URL:', window.currentImageUrl);
                     displayAnalysisResult(result);
 
                     // 更新状态
@@ -5643,10 +5654,17 @@
         }
 
         function displayVisualization(result) {
+            console.log('displayVisualization调用，图像URL:', window.currentImageUrl, '结果:', result);
             const visualizationArea = document.getElementById('visualization-area');
-            if (!visualizationArea) return;
+            if (!visualizationArea) {
+                console.error('找不到visualization-area元素');
+                return;
+            }
 
-            if (!window.currentImageUrl) return;
+            if (!window.currentImageUrl) {
+                console.error('window.currentImageUrl为空');
+                return;
+            }
 
             let visualizationHTML = `
                 <div class="visualization-image-container">
@@ -5710,8 +5728,12 @@
         }
 
         function addAnnotationBoxes(result) {
+            console.log('addAnnotationBoxes调用，结果:', result);
             const overlay = document.getElementById('visualization-overlay');
-            if (!overlay) return;
+            if (!overlay) {
+                console.error('找不到visualization-overlay元素');
+                return;
+            }
 
             // 清空现有标注
             overlay.innerHTML = '';
