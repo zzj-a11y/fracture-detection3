@@ -5485,10 +5485,20 @@
 
         function startAnalysis() {
             console.log('开始分析，当前文件:', window.currentImageFile?.name);
+
+            // 防止重复点击
+            if (window.isAnalyzing) {
+                console.log('正在分析中，请等待...');
+                return;
+            }
+
             if (!window.currentImageFile) {
                 alert('请先上传图像');
                 return;
             }
+
+            // 设置分析中标志
+            window.isAnalyzing = true;
 
             // 禁用分析按钮，启用重新分析按钮
             const analyzeBtn = document.getElementById('analyze-btn');
@@ -5521,10 +5531,24 @@
                 ? patientSelect.value
                 : null;
 
+            // 设置分析超时（60秒）
+            const analysisTimeout = setTimeout(() => {
+                console.warn('分析超时（60秒），重置状态');
+                if (statusText) statusText.textContent = '分析超时';
+                if (statusDetails) {
+                    statusDetails.innerHTML += `<div style="color: var(--warning-color);">分析超时，请重试或上传较小的图像</div>`;
+                }
+                resetAnalysisState();
+                window.isAnalyzing = false;
+            }, 60000);
+
             // 执行真实API分析
             console.log('调用API分析图像，患者ID:', patientId);
             FractureDetectionAPI.analyzeImage(window.currentImageFile, patientId)
                 .then(apiResult => {
+                    // 清除超时计时器
+                    clearTimeout(analysisTimeout);
+
                     console.log('API响应:', apiResult);
                     if (!apiResult.success) {
                         throw new Error(apiResult.message || '分析失败');
@@ -5571,8 +5595,14 @@
                     const shareResultBtn = document.getElementById('share-result-btn');
                     if (saveResultBtn) saveResultBtn.disabled = false;
                     if (shareResultBtn) shareResultBtn.disabled = false;
+
+                    // 重置分析中标志
+                    window.isAnalyzing = false;
                 })
                 .catch(error => {
+                    // 清除超时计时器
+                    clearTimeout(analysisTimeout);
+
                     console.error('分析错误:', error);
                     if (statusText) statusText.textContent = '分析失败';
                     if (statusDetails) {
@@ -5581,6 +5611,9 @@
                     // 重新启用分析按钮（因为分析失败）
                     if (analyzeBtn) analyzeBtn.disabled = false;
                     if (reanalyzeBtn) reanalyzeBtn.disabled = true;
+
+                    // 重置分析中标志
+                    window.isAnalyzing = false;
                 });
         }
 
