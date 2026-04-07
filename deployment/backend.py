@@ -63,47 +63,29 @@ try:
 
     # 尝试导入 ultralytics 并添加具体类
     try:
-        from ultralytics.nn.tasks import DetectionModel
-        torch.serialization.add_safe_globals([DetectionModel])
+        from ultralytics.nn.modules.conv import Conv
+        torch.serialization.add_safe_globals([Conv])
+        print("✅ 已添加 ultralytics.nn.modules.conv.Conv 到安全全局变量")
     except ImportError:
         pass  # ultralytics 未安装，跳过
 
     try:
-        # 导入ultralytics模块中的常见类
-        # 先确保ultralytics已安装
-        import ultralytics
-        # 添加ultralytics模块本身
-        torch.serialization.add_safe_globals([ultralytics])
-
-        # 尝试导入具体类
-        try:
-            from ultralytics.nn.modules.conv import Conv
-            torch.serialization.add_safe_globals([Conv])
-            print("✅ 已添加 ultralytics.nn.modules.conv.Conv 到安全全局变量")
-        except ImportError:
-            pass
-
-        try:
-            from ultralytics.nn.modules.block import Bottleneck, C2f, SPPF
-            torch.serialization.add_safe_globals([Bottleneck, C2f, SPPF])
-        except ImportError:
-            pass
-
-        try:
-            from ultralytics.nn.modules.head import Detect
-            torch.serialization.add_safe_globals([Detect])
-        except ImportError:
-            pass
-
-        try:
-            from ultralytics.nn.tasks import DetectionModel
-            torch.serialization.add_safe_globals([DetectionModel])
-        except ImportError:
-            pass
-
+        from ultralytics.nn.modules.block import Bottleneck, C2f, SPPF
+        torch.serialization.add_safe_globals([Bottleneck, C2f, SPPF])
     except ImportError:
-        print("⚠️ ultralytics 未安装，跳过相关类添加")
-        pass  # ultralytics 模块未安装，跳过
+        pass
+
+    try:
+        from ultralytics.nn.modules.head import Detect
+        torch.serialization.add_safe_globals([Detect])
+    except ImportError:
+        pass
+
+    try:
+        from ultralytics.nn.tasks import DetectionModel
+        torch.serialization.add_safe_globals([DetectionModel])
+    except ImportError:
+        pass  # ultralytics 未安装，跳过
 
     print("✅ PyTorch 安全全局变量配置完成")
 except Exception as e:
@@ -312,38 +294,24 @@ class FractureDetectionSystem:
                 ])
 
                 # 尝试导入ultralytics特定类
+                # 导入具体类
                 try:
-                    import ultralytics
-                    torch.serialization.add_safe_globals([ultralytics])
-
-                    # 导入具体类
-                    try:
-                        from ultralytics.nn.modules.conv import Conv
-                        torch.serialization.add_safe_globals([Conv])
-                        print("✅ 加载YOLO前已添加 ultralytics.nn.modules.conv.Conv")
-                    except ImportError:
-                        pass
-
-                    try:
-                        from ultralytics.nn.modules.block import Bottleneck, C2f, SPPF
-                        torch.serialization.add_safe_globals([Bottleneck, C2f, SPPF])
-                    except ImportError:
-                        pass
-
-                    try:
-                        from ultralytics.nn.modules.head import Detect
-                        torch.serialization.add_safe_globals([Detect])
-                    except ImportError:
-                        pass
-
-                    try:
-                        from ultralytics.nn.tasks import DetectionModel
-                        torch.serialization.add_safe_globals([DetectionModel])
-                    except ImportError:
-                        pass
-
+                    from ultralytics.nn.modules.conv import Conv
+                    torch.serialization.add_safe_globals([Conv])
+                    print("✅ 加载YOLO前已添加 ultralytics.nn.modules.conv.Conv")
                 except ImportError:
-                    print("⚠️ 加载YOLO时 ultralytics 导入失败")
+                    pass
+
+                try:
+                    from ultralytics.nn.modules.block import Bottleneck, C2f, SPPF
+                    torch.serialization.add_safe_globals([Bottleneck, C2f, SPPF])
+                except ImportError:
+                    pass
+
+                try:
+                    from ultralytics.nn.modules.head import Detect
+                    torch.serialization.add_safe_globals([Detect])
+                except ImportError:
                     pass
 
                 try:
