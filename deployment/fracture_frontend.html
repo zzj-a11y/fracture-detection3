@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>儿童手腕隐匿性骨折检测系统</title>
+    <title>慧眼识骨-儿童手腕隐匿性骨折检测系统</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         /* CSS变量定义 - 医疗主题配色 */
@@ -5574,9 +5574,17 @@
                     }
 
                     // 转换后端数据结构为前端格式
+                    // 计算置信度：如果有检测框，使用检测框置信度的最大值；否则使用分类概率
+                    let detectionConfidence = null;
+                    if (apiResult.data.detections && apiResult.data.detections.length > 0) {
+                        // 获取所有检测框置信度的最大值
+                        detectionConfidence = Math.max(...apiResult.data.detections.map(d => d.confidence));
+                    }
+                    const confidence = detectionConfidence !== null ? detectionConfidence : apiResult.data.classification.probability;
+
                     const result = {
                         hasFracture: apiResult.data.final_prediction === 1,
-                        confidence: apiResult.data.classification.probability,
+                        confidence: confidence,
                         fractureLocation: apiResult.data.detections.length > 0 ?
                             apiResult.data.detections[0].class : null,
                         processingTime: 2.5, // 可从后端添加
